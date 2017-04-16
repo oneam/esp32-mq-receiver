@@ -70,8 +70,8 @@ static void mq_receive_loop(void* param) {
 
   mq_event_t event;
   while (true) {
-    bool success = mq_receiver_receive(ctx, &event, 1000);
-    if (success) {
+    mq_result_t result = mq_receiver_receive(ctx, &event, 1000);
+    if (result == MQ_SUCCESS) {
       ESP_LOGI(__FUNCTION__, "Received MQ event for %x", event.wand_id);
       if(event.wand_id == 0x1337a981U) gpio_set_level(GPIO_NUM_25, 1);
       if(event.wand_id == 0x281ecd81U) gpio_set_level(GPIO_NUM_26, 1);

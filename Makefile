@@ -3,7 +3,7 @@
 # project subdirectory.
 #
 
-PROJECT_NAME := app-template
+PROJECT_NAME := mq-receiver
 
 include $(IDF_PATH)/make/project.mk
 

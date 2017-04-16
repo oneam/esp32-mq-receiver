@@ -1,8 +1,19 @@
 /*
- * mq_receiver.c
+ *  Receives signals from the RMT driver and parses MQ wand ids
  *
- *  Created on: Apr 9, 2017
- *      Author: sam
+ *  Copyright 2017 Sam Leitch
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
  */
 
 #include "mq_receiver.h"
@@ -64,7 +75,10 @@ static bool mq_receiver_decode(rmt_item32_t *items, int num_items, mq_event_t* p
   return true;
 }
 
-bool mq_receiver_receive(mq_receiver_t ctx, mq_event_t *event, int timeout_ms) {
+mq_result_t mq_receiver_receive(mq_receiver_t ctx, mq_event_t *event, int timeout_ms) {
+  if(!ctx) return MQ_NOT_INITIALIZED;
+
+  mq_result_t result = MQ_SUCCESS;
   TickType_t timeout = timeout_ms <= 0 ? portMAX_DELAY : portTICK_PERIOD_MS * timeout_ms;
   rmt_rx_start(ctx->channel, true);
 
@@ -72,13 +86,16 @@ bool mq_receiver_receive(mq_receiver_t ctx, mq_event_t *event, int timeout_ms) {
   void* items = xRingbufferReceive(ctx->rx_buffer, &items_size, timeout);
   ESP_LOGD(MQ_LOG, "Received %d bytes", items_size);
 
-  int num_items = items_size / sizeof(rmt_item32_t);
-  bool success = mq_receiver_decode(items, num_items, event);
-
-  if(items) vRingbufferReturnItem(ctx->rx_buffer, items);
+  if(items) {
+    int num_items = items_size / sizeof(rmt_item32_t);
+    if(!mq_receiver_decode(items, num_items, event)) result = MQ_DECODE_FAILED;
+    vRingbufferReturnItem(ctx->rx_buffer, items);
+  } else {
+    result = MQ_TIMEOUT;
+  }
 
   rmt_rx_stop(ctx->channel);
-  return success;
+  return result;
 }
 
 void mq_receiver_uninit(mq_receiver_t *ctx) {
