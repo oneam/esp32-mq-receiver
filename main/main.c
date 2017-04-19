@@ -23,13 +23,106 @@
 #include "freertos/FreeRTOS.h"
 #include "mq_receiver.h"
 #include "nvs_flash.h"
+#include "ws2812rmt.h"
 
 esp_err_t event_handler(void *ctx, system_event_t *event)
 {
     return ESP_OK;
 }
 
-static void mq_receive_loop(void* param);
+#define GREEN_LED GPIO_NUM_25
+#define BLUE_LED GPIO_NUM_26
+
+struct led_params {
+  gpio_num_t gpio;
+  xSemaphoreHandle trigger;
+};
+
+void led_loop(void *params) {
+  struct led_params *p = (struct led_params*)params;
+  gpio_set_direction(p->gpio, GPIO_MODE_OUTPUT);
+  gpio_set_pull_mode(p->gpio, GPIO_PULLUP_ONLY);
+  gpio_set_intr_type(p->gpio, GPIO_INTR_DISABLE);
+
+  while(true) {
+    gpio_set_level(p->gpio, 1);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    gpio_set_level(p->gpio, 0);
+    xSemaphoreTake(p->trigger, portMAX_DELAY);
+  }
+}
+
+#define NUM_LEDS 24
+#define LED_RING_GPIO GPIO_NUM_14
+#define LED_RING_RMT RMT_CHANNEL_0
+
+struct led_ring_params {
+  rgb_t colors[NUM_LEDS];
+};
+
+rgb_t black = {  0,  0,  0 };
+rgb_t blue  = {  0,  0, 16 };
+rgb_t green = {  0, 16,  0 };
+rgb_t red   = { 16,  0,  0 };
+
+void led_ring_loop(void* params) {
+  struct led_ring_params *p = (struct led_ring_params*)params;
+
+  ws2812rmt_t led_ring = ws2812rmt_init(LED_RING_RMT, LED_RING_GPIO, NUM_LEDS);
+
+  for(int i=0; i<NUM_LEDS; ++i) {
+    p->colors[i] = black;
+  }
+  p->colors[0] = red;
+
+  while(true) {
+    ws2812rmt_set_colors(led_ring, p->colors, NUM_LEDS, false);
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    for(int i=NUM_LEDS-1; i>0; --i) {
+      p->colors[i] = p->colors[i-1];
+    }
+
+    if(rgb_equal(p->colors[0], p->colors[NUM_LEDS - 1])) {
+      p->colors[0] = black;
+    }
+  }
+}
+
+#define MQ_GPIO GPIO_NUM_27
+#define MQ_RMT RMT_CHANNEL_1
+
+struct mq_params {
+  struct led_params green_led;
+  struct led_params blue_led;
+  struct led_ring_params led_ring;
+};
+
+static void mq_receive_loop(void* params) {
+  struct mq_params *p = (struct mq_params*)params;
+
+  mq_receiver_t ctx = mq_receiver_init(MQ_RMT, MQ_GPIO);
+  mq_event_t event;
+
+  while (true) {
+    mq_result_t result = mq_receiver_receive(ctx, &event, portMAX_DELAY);
+    if (result != MQ_SUCCESS) continue;
+
+    ESP_LOGI(__FUNCTION__, "Received MQ event for %x", event.wand_id);
+    if(event.wand_id == 0x1337a981U) {
+      p->led_ring.colors[0] = green;
+      xSemaphoreGive(p->green_led.trigger);
+    }
+
+    if(event.wand_id == 0x281ecd81U) {
+      p->led_ring.colors[0] = blue;
+      xSemaphoreGive(p->blue_led.trigger);
+    }
+  }
+}
+
+struct mq_params app_params;
 
 void app_main(void)
 {
@@ -51,33 +144,14 @@ void app_main(void)
     ESP_ERROR_CHECK( esp_wifi_start() );
     ESP_ERROR_CHECK( esp_wifi_connect() );
 
-    xTaskCreate(mq_receive_loop, "mq_receive_loop", 2048, NULL, 5, NULL);
-}
+    app_params.green_led.gpio = GREEN_LED;
+    app_params.green_led.trigger = xSemaphoreCreateBinary();
 
-static void mq_receive_loop(void* param) {
-  mq_receiver_t ctx = mq_receiver_init(RMT_CHANNEL_1, GPIO_NUM_27, 5);
-  gpio_config_t config = {
-      GPIO_SEL_25 | GPIO_SEL_26,
-      GPIO_MODE_OUTPUT,
-      GPIO_PULLUP_ENABLE,
-      GPIO_PULLDOWN_DISABLE,
-      GPIO_INTR_DISABLE
-  };
-  gpio_config(&config);
+    app_params.blue_led.gpio = BLUE_LED;
+    app_params.blue_led.trigger = xSemaphoreCreateBinary();
 
-  gpio_set_level(GPIO_NUM_25, 1);
-  gpio_set_level(GPIO_NUM_26, 1);
-
-  mq_event_t event;
-  while (true) {
-    mq_result_t result = mq_receiver_receive(ctx, &event, 1000);
-    if (result == MQ_SUCCESS) {
-      ESP_LOGI(__FUNCTION__, "Received MQ event for %x", event.wand_id);
-      if(event.wand_id == 0x1337a981U) gpio_set_level(GPIO_NUM_25, 1);
-      if(event.wand_id == 0x281ecd81U) gpio_set_level(GPIO_NUM_26, 1);
-    } else {
-      gpio_set_level(GPIO_NUM_25, 0);
-      gpio_set_level(GPIO_NUM_26, 0);
-    }
-  }
+    xTaskCreate(led_ring_loop, "led_ring_loop", 2048, &(app_params.led_ring), 5, NULL);
+    xTaskCreate(led_loop, "green_led_loop", 2048, &(app_params.green_led), 5, NULL);
+    xTaskCreate(led_loop, "blue_led_loop", 2048, &(app_params.blue_led), 5, NULL);
+    xTaskCreate(mq_receive_loop, "mq_receive_loop", 2048, &app_params, 5, NULL);
 }

@@ -44,7 +44,7 @@ typedef struct mq_receiver_s* mq_receiver_t;
 
 
 /** Initializes an MQ receiver */
-mq_receiver_t mq_receiver_init(rmt_channel_t channel, gpio_num_t gpio_num, int queue_len);
+mq_receiver_t mq_receiver_init(rmt_channel_t channel, gpio_num_t gpio_num);
 
 
 /** Starts the RMT driver receiving. */

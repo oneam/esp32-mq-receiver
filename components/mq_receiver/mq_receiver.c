@@ -30,7 +30,7 @@ struct mq_receiver_s {
 
 struct mq_receiver_s mq_receiver_ctx[8];
 
-mq_receiver_t mq_receiver_init(rmt_channel_t channel, gpio_num_t gpio_num, int queue_len) {
+mq_receiver_t mq_receiver_init(rmt_channel_t channel, gpio_num_t gpio_num) {
   ESP_LOGI(MQ_LOG, "Initializing mq_receiver context with channel %d and gpio_num %d", channel, gpio_num);
   rmt_config_t rmt;
   rmt.channel = channel;
@@ -79,7 +79,7 @@ mq_result_t mq_receiver_receive(mq_receiver_t ctx, mq_event_t *event, int timeou
   if(!ctx) return MQ_NOT_INITIALIZED;
 
   mq_result_t result = MQ_SUCCESS;
-  TickType_t timeout = timeout_ms <= 0 ? portMAX_DELAY : portTICK_PERIOD_MS * timeout_ms;
+  TickType_t timeout = timeout_ms <= 0 ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
   rmt_rx_start(ctx->channel, true);
 
   size_t items_size = 0;
